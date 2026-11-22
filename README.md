@@ -81,5 +81,32 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## Schema 刷新与缓存版本恢复协同
+
+跨 `schema_diff / data_cache / sample_check / data_delivery / data_version /
+retry_queue / pipeline_audit / call_log` 的字段版本协同工作流，由
+`app/services/schema_refresh.py`（`SchemaRefreshCoordinator`）承载，状态存于
+`app/schema_refresh_state.py`，固定路径路由 `app/routers/schema_refresh.py`
+（前缀 `/api/schema-refresh`，先于通用 `/api/{module}` 注册）。
+
+保证的规则：
+
+- 端点 Schema 变更后缓存置「待刷新」，旧字段版本（v1）保持可投递；
+- 缺主键样本直接判失败，未通过校验的分区不进可用缓存清单与投递待办；
+- 一笔投递领用的所有分区必须来自同一个字段版本，校验失败时投递回退有效版本；
+- 回滚可中断并幂等重试，缓存恢复刷新前可用状态，已领用 v1 仍按原分区补投；
+- 刷新撤回后迟到的 v2 回执只记 `ignored`，不能让刷新自行生效；
+- 可用缓存清单与投递待办同步维护，历史版本保留可回溯；
+- 完成投递按可用版本取实际分区写快照，交付记录保留字段版本、分区与订阅方。
+
+核对脚本（无需启动服务，直接跑领域层，含 45 项断言）：
+
+```bash
+cd backend
+.venv/bin/python scripts/schema_refresh_demo.py
+# HTTP 冒烟需先 ./run.sh，再执行：
+.venv/bin/python scripts/schema_refresh_http_smoke.py
+```
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA
